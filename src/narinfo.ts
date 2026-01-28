@@ -67,13 +67,13 @@ export function generateNarinfo(data: NarinfoData): string {
   if (data.system) {
     lines.push(`System: ${data.system}`);
   }
+  lines.push(`Sig: ${data.sig}`);
+
   if (data.ca) {
     lines.push(`CA: ${data.ca}`);
   }
 
-  lines.push(`Sig: ${data.sig}`);
-
-  return lines.join('\n');
+  return lines.join('\n') + '\n';
 }
 
 /**

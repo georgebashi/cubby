@@ -6,6 +6,7 @@ export interface CacheConfigResponse {
   is_public: boolean;
   priority: number;
   store_dir: string;
+  upstream_cache_key_names: string[];
 }
 
 export interface CacheConfigInput {
@@ -25,5 +26,6 @@ export function handleCacheConfig(input: CacheConfigInput): CacheConfigResponse 
     is_public: false,
     priority: parseInt(input.priority, 10),
     store_dir: '/nix/store',
+    upstream_cache_key_names: [],
   };
 }

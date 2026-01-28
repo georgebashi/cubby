@@ -65,4 +65,70 @@ Sig: cache-1:base64signature==`;
     const output = generateNarinfo(data);
     expect(output).toContain('References: ');
   });
+
+  it('generates narinfo with trailing newline', () => {
+    const data: NarinfoData = {
+      storePath: '/nix/store/abc123-test',
+      url: 'nar/abc123.nar',
+      compression: 'none',
+      fileHash: 'sha256:filehash',
+      fileSize: 1000,
+      narHash: 'sha256:narhash',
+      narSize: 1000,
+      references: [],
+      sig: 'key:sig',
+    };
+
+    const output = generateNarinfo(data);
+    expect(output.endsWith('\n')).toBe(true);
+  });
+
+  it('outputs Sig before CA in standard Nix field order', () => {
+    const data: NarinfoData = {
+      storePath: '/nix/store/abc123-test',
+      url: 'nar/abc123.nar',
+      compression: 'none',
+      fileHash: 'sha256:filehash',
+      fileSize: 1000,
+      narHash: 'sha256:narhash',
+      narSize: 1000,
+      references: [],
+      sig: 'key:signature',
+      ca: 'fixed:sha256:abc123',
+    };
+
+    const output = generateNarinfo(data);
+    const sigIndex = output.indexOf('Sig:');
+    const caIndex = output.indexOf('CA:');
+
+    expect(sigIndex).toBeGreaterThan(-1);
+    expect(caIndex).toBeGreaterThan(-1);
+    expect(sigIndex).toBeLessThan(caIndex);
+  });
+
+  it('round-trips narinfo correctly', () => {
+    const original: NarinfoData = {
+      storePath: '/nix/store/abc123-openssl-3.0.0',
+      url: 'nar/xyz789.nar.zst',
+      compression: 'zstd',
+      fileHash: 'sha256:xyz789abcdef',
+      fileSize: 1234567,
+      narHash: 'sha256:def456abcdef',
+      narSize: 2345678,
+      references: ['abc123-openssl-3.0.0', 'def456-glibc-2.35'],
+      sig: 'cache-1:base64signature==',
+      deriver: 'abc123-openssl.drv',
+    };
+
+    const generated = generateNarinfo(original);
+    const parsed = parseNarinfo(generated);
+
+    expect(parsed.storePath).toBe(original.storePath);
+    expect(parsed.url).toBe(original.url);
+    expect(parsed.compression).toBe(original.compression);
+    expect(parsed.narHash).toBe(original.narHash);
+    expect(parsed.narSize).toBe(original.narSize);
+    expect(parsed.references).toEqual(original.references);
+    expect(parsed.sig).toBe(original.sig);
+  });
 });

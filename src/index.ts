@@ -34,7 +34,9 @@ const authMiddleware = (requiredToken: "read" | "write") => {
 
 // Public route - cache info (no auth per design doc comment, but we'll keep read auth for security)
 app.get("/nix-cache-info", (c) => {
-  return c.text(handleCacheInfo(c.env.CACHE_PRIORITY));
+  return c.text(handleCacheInfo(c.env.CACHE_PRIORITY), 200, {
+    "Content-Type": "text/x-nix-cache-info",
+  });
 });
 
 // Read routes
@@ -49,6 +51,10 @@ app.get("/:filename", authMiddleware("read"), async (c) => {
 
   const hash = filename.slice(0, -8); // Remove ".narinfo"
   const result = await handleGetNarinfo(c.env.BUCKET, hash);
+
+  if (result.invalidHash) {
+    return c.text("Bad Request: Invalid store path hash", 400);
+  }
 
   if (!result.found) {
     return c.text("Not Found", 404);
@@ -68,9 +74,13 @@ app.on("HEAD", "/:filename", authMiddleware("read"), async (c) => {
   }
 
   const hash = filename.slice(0, -8); // Remove ".narinfo"
-  const exists = await handleHeadNarinfo(c.env.BUCKET, hash);
+  const result = await handleHeadNarinfo(c.env.BUCKET, hash);
 
-  if (!exists) {
+  if (result.invalidHash) {
+    return c.text("", 400);
+  }
+
+  if (!result.exists) {
     return c.text("", 404);
   }
 

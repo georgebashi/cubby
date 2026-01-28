@@ -17,4 +17,27 @@ describe('handleCacheConfig', () => {
     expect(result.priority).toBe(40);
     expect(result.store_dir).toBe('/nix/store');
   });
+
+  it('includes upstream_cache_key_names for Attic API compatibility', () => {
+    const result = handleCacheConfig({
+      baseUrl: 'https://cache.example.com',
+      publicKey: 'cache-1:pubkey123',
+      priority: '40',
+    });
+
+    // Attic clients expect this field to avoid redundant uploads
+    // of store paths signed by upstream caches like cache.nixos.org
+    expect(result.upstream_cache_key_names).toEqual([]);
+  });
+
+  it('parses priority as integer', () => {
+    const result = handleCacheConfig({
+      baseUrl: 'https://cache.example.com',
+      publicKey: 'cache-1:pubkey123',
+      priority: '41',
+    });
+
+    expect(result.priority).toBe(41);
+    expect(typeof result.priority).toBe('number');
+  });
 });
