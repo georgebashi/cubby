@@ -1,0 +1,17 @@
+name = "cubby"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "cubby-cache"
+
+[vars]
+CACHE_NAME = "main"
+CACHE_PRIORITY = "40"
+
+# Secrets (set via `wrangler secret put`):
+# - READ_TOKEN: Token for read access
+# - WRITE_TOKEN: Token for write access
+# - SIGNING_KEY: Key for signing narinfo files
+# - SIGNING_KEY_NAME: Name identifier for the signing key
