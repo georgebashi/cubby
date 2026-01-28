@@ -37,7 +37,9 @@ async function signJwt(
 
 describe("github-oidc", () => {
   const originalFetch = globalThis.fetch;
-  let jwks: { keys: Array<Record<string, string>> };
+  let jwks: {
+    keys: Array<JsonWebKey & { kid: string; use: string; alg: string }>;
+  };
   let privateKey: CryptoKey;
   const kid = "test-kid";
 
@@ -54,12 +56,16 @@ describe("github-oidc", () => {
       ["sign", "verify"]
     );
 
+    if (!("privateKey" in keyPair) || !("publicKey" in keyPair)) {
+      throw new Error("Expected CryptoKeyPair from generateKey");
+    }
+
     privateKey = keyPair.privateKey;
     const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
     jwks = {
       keys: [
         {
-          ...(publicJwk as Record<string, string>),
+          ...(publicJwk as JsonWebKey),
           kid,
           use: "sig",
           alg: "RS256",

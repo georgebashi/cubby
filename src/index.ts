@@ -25,7 +25,15 @@ const app = new Hono<{
 
 // Auth middleware
 const authMiddleware = (requiredAccess: "read" | "write") => {
-  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+  return async (
+    c: Context<{
+      Bindings: Env;
+      Variables: {
+        ghaClaims?: GithubOidcClaims;
+      };
+    }>,
+    next: Next
+  ) => {
     const authHeader = c.req.header("Authorization");
     if (!authHeader) {
       return c.text("Unauthorized", 401);
