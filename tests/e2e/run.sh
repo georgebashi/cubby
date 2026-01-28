@@ -57,6 +57,35 @@ fail() {
   exit 1
 }
 
+check_prerequisites() {
+  echo "Checking prerequisites..."
+
+  # Check for required commands
+  local missing=""
+  for cmd in nix nix-build curl wrangler attic; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing="$missing $cmd"
+    fi
+  done
+
+  if [[ -n "$missing" ]]; then
+    echo "ERROR: Missing required commands:$missing" >&2
+    echo "Run this test from inside 'nix develop' to get all dependencies." >&2
+    exit 1
+  fi
+}
+
+kill_port_users() {
+  # Kill any processes using our port (zombie workerd from previous runs)
+  local pids
+  pids=$(lsof -ti ":$PORT" 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    echo "Killing existing processes on port $PORT: $pids"
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 cleanup() {
   echo "Cleaning up..."
 
@@ -69,7 +98,20 @@ cleanup() {
     echo ""
   fi
 
+  # Kill wrangler process
   [[ -n "${WRANGLER_PID:-}" ]] && kill "$WRANGLER_PID" 2>/dev/null || true
+
+  # Give wrangler a moment to clean up its children gracefully
+  sleep 0.5
+
+  # Kill any remaining workerd processes on our port (handles SIGKILL scenarios)
+  local pids
+  pids=$(lsof -ti ":$PORT" 2>/dev/null || true)
+  if [[ -n "$pids" ]]; then
+    echo "Killing remaining processes on port $PORT"
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+  fi
+
   [[ -n "${E2E_VARS:-}" && -f "${E2E_VARS:-}" ]] && rm -f "$E2E_VARS"
   [[ -n "${ATTIC_HOME:-}" && -d "${ATTIC_HOME:-}" ]] && rm -rf "$ATTIC_HOME"
   [[ -n "${SIGNING_KEY_FILE:-}" && -f "${SIGNING_KEY_FILE:-}" ]] && rm -f "$SIGNING_KEY_FILE"
@@ -245,6 +287,11 @@ main() {
   echo "=== Cubby E2E Test ==="
   echo "Timeout: ${TIMEOUT_SECONDS}s, Operation timeout: ${OPERATION_TIMEOUT}s"
   echo ""
+
+  # Kill any zombie processes from previous runs
+  kill_port_users
+
+  check_prerequisites
 
   # Start overall timeout watchdog
   start_watchdog
