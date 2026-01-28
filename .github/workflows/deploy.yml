@@ -29,6 +29,9 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v12
 
+      - name: Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
       - name: E2E Test
         run: nix develop -c npm run test:e2e
 
