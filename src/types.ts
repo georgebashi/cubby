@@ -11,4 +11,7 @@ export interface Env {
   WRITE_TOKEN: string;
   SIGNING_KEY: string;
   SIGNING_KEY_NAME: string;
+
+  // GitHub OIDC auth
+  GH_ALLOWED_OWNERS: string;
 }

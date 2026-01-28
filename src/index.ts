@@ -9,8 +9,19 @@ import { handleGetNar } from "./handlers/nar.js";
 import { handleUpload, parseNarInfoHeader } from "./handlers/upload.js";
 import { getPublicKey } from "./signing.js";
 import { parseAuthorizationHeader, verifyToken } from "./auth.js";
+import {
+  parseAllowedOwners,
+  type GithubOidcClaims,
+  verifyGithubOidcToken,
+} from "./github-oidc.js";
+import { buildProjectInfo } from "./flakehub.js";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{
+  Bindings: Env;
+  Variables: {
+    ghaClaims?: GithubOidcClaims;
+  };
+}>();
 
 // Auth middleware
 const authMiddleware = (requiredAccess: "read" | "write") => {
@@ -25,13 +36,62 @@ const authMiddleware = (requiredAccess: "read" | "write") => {
       return c.text("Unauthorized", 401);
     }
 
-    if (!verifyToken(token, requiredAccess, c.env.READ_TOKEN, c.env.WRITE_TOKEN)) {
-      return c.text("Forbidden", 403);
+    const legacyAllowed = verifyToken(
+      token,
+      requiredAccess,
+      c.env.READ_TOKEN,
+      c.env.WRITE_TOKEN
+    );
+
+    if (!legacyAllowed) {
+      const allowedOwners = parseAllowedOwners(c.env.GH_ALLOWED_OWNERS);
+      if (allowedOwners.size === 0) {
+        return c.text("Forbidden", 403);
+      }
+
+      try {
+        const claims = await verifyGithubOidcToken(token, allowedOwners);
+        c.set("ghaClaims", claims);
+      } catch (err) {
+        console.warn("GitHub OIDC auth failed:", err);
+        return c.text("Forbidden", 403);
+      }
     }
 
     await next();
   };
 };
+
+async function requireGithubOidc(
+  c: Context<{
+    Bindings: Env;
+    Variables: {
+      ghaClaims?: GithubOidcClaims;
+    };
+  }>
+): Promise<GithubOidcClaims | Response> {
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader) {
+    return c.text("Unauthorized", 401);
+  }
+
+  const token = parseAuthorizationHeader(authHeader);
+  if (!token) {
+    return c.text("Unauthorized", 401);
+  }
+
+  const allowedOwners = parseAllowedOwners(c.env.GH_ALLOWED_OWNERS);
+  if (allowedOwners.size === 0) {
+    return c.text("Forbidden", 403);
+  }
+
+  try {
+    return await verifyGithubOidcToken(token, allowedOwners);
+  } catch (err) {
+    console.warn("GitHub OIDC auth failed:", err);
+    return c.text("Forbidden", 403);
+  }
+}
 
 // Public route - cache info (no auth per design doc comment, but we'll keep read auth for security)
 app.get("/nix-cache-info", (c) => {
@@ -142,6 +202,30 @@ app.put("/nar/:filename{.+}", async (c) => {
 });
 
 // API routes
+app.get("/project", async (c) => {
+  const claims = await requireGithubOidc(c);
+  if (claims instanceof Response) {
+    return claims;
+  }
+
+  const projectName = claims.repository ?? "unknown-repo";
+  const owner = claims.repository_owner ?? "unknown-owner";
+  const result = await buildProjectInfo(owner, projectName);
+  return c.json(result);
+});
+
+app.get("/project/:flake", async (c) => {
+  const claims = await requireGithubOidc(c);
+  if (claims instanceof Response) {
+    return claims;
+  }
+
+  const projectName = c.req.param("flake");
+  const owner = claims.repository_owner ?? "unknown-owner";
+  const result = await buildProjectInfo(owner, projectName);
+  return c.json(result);
+});
+
 app.get("/_api/v1/cache-config/:cache", authMiddleware("read"), (c) => {
   const url = new URL(c.req.url);
   const baseUrl = `${url.protocol}//${url.host}`;

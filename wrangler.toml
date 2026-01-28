@@ -9,6 +9,7 @@ bucket_name = "cubby-cache"
 [vars]
 CACHE_NAME = "main"
 CACHE_PRIORITY = "40"
+GH_ALLOWED_OWNERS = "georgebashi"
 
 # Secrets (set via `wrangler secret put`):
 # - READ_TOKEN: Token for read access
