@@ -101,11 +101,72 @@ async function requireGithubOidc(
   }
 }
 
+async function requireFlakehubApiAuth(
+  c: Context<{
+    Bindings: Env;
+    Variables: {
+      ghaClaims?: GithubOidcClaims;
+    };
+  }>
+): Promise<GithubOidcClaims | Response> {
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader) {
+    return c.text("Unauthorized", 401);
+  }
+
+  const token = parseAuthorizationHeader(authHeader);
+  if (!token) {
+    return c.text("Unauthorized", 401);
+  }
+
+  const legacyAllowed = verifyToken(
+    token,
+    "read",
+    c.env.READ_TOKEN,
+    c.env.WRITE_TOKEN
+  );
+  if (legacyAllowed) {
+    return {
+      iss: "static-token",
+      aud: "cubby",
+      exp: Number.MAX_SAFE_INTEGER,
+      repository_owner: "static-token",
+    };
+  }
+
+  return await requireGithubOidc(c);
+}
+
 // Public route - cache info (no auth per design doc comment, but we'll keep read auth for security)
 app.get("/nix-cache-info", (c) => {
   return c.text(handleCacheInfo(c.env.CACHE_PRIORITY), 200, {
     "Content-Type": "text/x-nix-cache-info",
   });
+});
+
+// FlakeHub API routes (must be above catch-all /:filename)
+app.get("/project", async (c) => {
+  const claims = await requireFlakehubApiAuth(c);
+  if (claims instanceof Response) {
+    return claims;
+  }
+
+  const projectName = claims.repository ?? "unknown-repo";
+  const owner = claims.repository_owner ?? "unknown-owner";
+  const result = await buildProjectInfo(owner, projectName);
+  return c.json(result);
+});
+
+app.get("/project/:flake", async (c) => {
+  const claims = await requireFlakehubApiAuth(c);
+  if (claims instanceof Response) {
+    return claims;
+  }
+
+  const projectName = c.req.param("flake");
+  const owner = claims.repository_owner ?? "unknown-owner";
+  const result = await buildProjectInfo(owner, projectName);
+  return c.json(result);
 });
 
 // Read routes
@@ -210,30 +271,6 @@ app.put("/nar/:filename{.+}", async (c) => {
 });
 
 // API routes
-app.get("/project", async (c) => {
-  const claims = await requireGithubOidc(c);
-  if (claims instanceof Response) {
-    return claims;
-  }
-
-  const projectName = claims.repository ?? "unknown-repo";
-  const owner = claims.repository_owner ?? "unknown-owner";
-  const result = await buildProjectInfo(owner, projectName);
-  return c.json(result);
-});
-
-app.get("/project/:flake", async (c) => {
-  const claims = await requireGithubOidc(c);
-  if (claims instanceof Response) {
-    return claims;
-  }
-
-  const projectName = c.req.param("flake");
-  const owner = claims.repository_owner ?? "unknown-owner";
-  const result = await buildProjectInfo(owner, projectName);
-  return c.json(result);
-});
-
 app.get("/_api/v1/cache-config/:cache", authMiddleware("read"), (c) => {
   const url = new URL(c.req.url);
   const baseUrl = `${url.protocol}//${url.host}`;
