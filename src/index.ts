@@ -8,23 +8,24 @@ import { handleGetNarinfo, handleHeadNarinfo } from "./handlers/narinfo.js";
 import { handleGetNar } from "./handlers/nar.js";
 import { handleUpload, parseNarInfoHeader } from "./handlers/upload.js";
 import { getPublicKey } from "./signing.js";
+import { parseAuthorizationHeader, verifyToken } from "./auth.js";
 
 const app = new Hono<{ Bindings: Env }>();
 
 // Auth middleware
-const authMiddleware = (requiredToken: "read" | "write") => {
+const authMiddleware = (requiredAccess: "read" | "write") => {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authHeader = c.req.header("Authorization");
     if (!authHeader) {
       return c.text("Unauthorized", 401);
     }
 
-    const token = authHeader.replace(/^Bearer\s+/i, "");
-    const expectedToken =
-      requiredToken === "write" ? c.env.WRITE_TOKEN : c.env.READ_TOKEN;
+    const token = parseAuthorizationHeader(authHeader);
+    if (!token) {
+      return c.text("Unauthorized", 401);
+    }
 
-    // Write token also grants read access
-    if (token !== expectedToken && token !== c.env.WRITE_TOKEN) {
+    if (!verifyToken(token, requiredAccess, c.env.READ_TOKEN, c.env.WRITE_TOKEN)) {
       return c.text("Forbidden", 403);
     }
 

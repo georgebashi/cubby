@@ -269,6 +269,83 @@ verify_cache_hits() {
   echo "Both paths verified in cache with valid signatures!"
 }
 
+# Test permission enforcement (Attic integration-tests/basic equivalent)
+test_permissions() {
+  echo "=== Test: Permission enforcement ==="
+
+  # Extract hash from a path we pushed
+  local hash_a
+  hash_a=$(basename "$NIX_PATH_A" | cut -d- -f1)
+
+  # Read with READ_TOKEN should succeed
+  echo "Testing read with READ_TOKEN..."
+  timeout_cmd 10 curl -sf -H "Authorization: Bearer $READ_TOKEN" \
+    "http://localhost:$PORT/$hash_a.narinfo" >/dev/null \
+    || fail "Read with READ_TOKEN should succeed"
+
+  # Read with WRITE_TOKEN should also succeed (write implies read)
+  echo "Testing read with WRITE_TOKEN..."
+  timeout_cmd 10 curl -sf -H "Authorization: Bearer $WRITE_TOKEN" \
+    "http://localhost:$PORT/$hash_a.narinfo" >/dev/null \
+    || fail "Read with WRITE_TOKEN should succeed"
+
+  # Read without any token should fail (401)
+  echo "Testing read without token..."
+  local status_no_token
+  status_no_token=$(timeout_cmd 10 curl -s -o /dev/null -w "%{http_code}" \
+    "http://localhost:$PORT/$hash_a.narinfo")
+  [[ "$status_no_token" == "401" ]] \
+    || fail "Read without token should return 401, got $status_no_token"
+
+  # Read with invalid token should fail (403)
+  echo "Testing read with invalid token..."
+  local status_invalid
+  status_invalid=$(timeout_cmd 10 curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer invalid-token" \
+    "http://localhost:$PORT/$hash_a.narinfo")
+  [[ "$status_invalid" == "403" ]] \
+    || fail "Read with invalid token should return 403, got $status_invalid"
+
+  # Write (upload API) with READ_TOKEN should fail
+  echo "Testing upload with READ_TOKEN (should fail)..."
+  local status_write_with_read
+  status_write_with_read=$(timeout_cmd 10 curl -s -o /dev/null -w "%{http_code}" \
+    -X PUT \
+    -H "Authorization: Bearer $READ_TOKEN" \
+    -H "Content-Type: application/octet-stream" \
+    -H "X-Attic-Nar-Info: {}" \
+    -d "test" \
+    "http://localhost:$PORT/_api/v1/upload-path")
+  [[ "$status_write_with_read" == "403" ]] \
+    || fail "Upload with READ_TOKEN should return 403, got $status_write_with_read"
+
+  echo "Permission enforcement tests passed!"
+}
+
+# Test public cache-info endpoint
+test_cache_info() {
+  echo "=== Test: Cache info endpoint ==="
+
+  # nix-cache-info should be accessible (note: currently requires auth, but testing content)
+  echo "Testing nix-cache-info endpoint..."
+  local cache_info
+  cache_info=$(timeout_cmd 10 curl -sf "http://localhost:$PORT/nix-cache-info") \
+    || fail "Failed to fetch nix-cache-info"
+
+  # Verify required fields
+  echo "$cache_info" | grep -q "^StoreDir: /nix/store" \
+    || fail "Cache info missing StoreDir"
+  echo "$cache_info" | grep -q "^WantMassQuery: 1" \
+    || fail "Cache info missing or incorrect WantMassQuery"
+  echo "$cache_info" | grep -q "^Priority:" \
+    || fail "Cache info missing Priority"
+
+  echo "Cache info response:"
+  echo "$cache_info"
+  echo ""
+  echo "Cache info tests passed!"
+}
+
 start_watchdog() {
   # Start a background watchdog that kills this script after TIMEOUT_SECONDS
   (
@@ -300,10 +377,18 @@ main() {
   start_wrangler
   wait_for_server
 
+  # Test cache info endpoint (public endpoint)
+  test_cache_info
+
+  # Test push/pull functionality
   test_nix_copy
   test_attic_push
 
+  # Verify cache contents
   verify_cache_hits
+
+  # Test permission enforcement (Attic compatibility)
+  test_permissions
 
   echo ""
   echo "=== All tests passed! ==="

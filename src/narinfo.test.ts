@@ -428,4 +428,64 @@ Sig: key:sig`;
       expect(narinfo.fileHash).toContain(':');
     });
   });
+
+  // Attic test_from_typed equivalent - hash format validation
+  // Note: Cubby doesn't validate hash encodings server-side (trusts client),
+  // but we test format expectations for documentation purposes
+  describe('typed hash format expectations (test_from_typed)', () => {
+    it('base16 hashes are 64 characters after algorithm prefix', () => {
+      // Attic accepts base16: sha256:64-hex-chars
+      const base16Hash = 'sha256:91e129ac1959d062ad093d2b1f8b65afae0f712056fe3eac78ec530ff6a1bb9a';
+      const narinfo = `StorePath: /nix/store/abc123-test
+URL: nar/abc123.nar
+Compression: none
+FileHash: sha256:filehash
+FileSize: 1000
+NarHash: ${base16Hash}
+NarSize: 1000
+References:
+Sig: key:sig`;
+
+      const parsed = parseNarinfo(narinfo);
+      expect(parsed.narHash).toBe(base16Hash);
+
+      // Verify base16 format: algorithm:64-hex-chars
+      const [algo, hash] = parsed.narHash.split(':');
+      expect(algo).toBe('sha256');
+      expect(hash.length).toBe(64);
+      expect(hash).toMatch(/^[0-9a-f]+$/);
+    });
+
+    it('base32 hashes are 52 characters after algorithm prefix', () => {
+      // Attic accepts base32: sha256:52-nix-base32-chars
+      const base32Hash = 'sha256:16mvl7v0ylzcg2n3xzjn41qhzbmgcn5iyarx16nn5l2r36n2kqci';
+      const narinfo = `StorePath: /nix/store/abc123-test
+URL: nar/abc123.nar
+Compression: none
+FileHash: sha256:filehash
+FileSize: 1000
+NarHash: ${base32Hash}
+NarSize: 1000
+References:
+Sig: key:sig`;
+
+      const parsed = parseNarinfo(narinfo);
+      expect(parsed.narHash).toBe(base32Hash);
+
+      // Verify base32 format: algorithm:52-nix-base32-chars
+      const [algo, hash] = parsed.narHash.split(':');
+      expect(algo).toBe('sha256');
+      expect(hash.length).toBe(52);
+    });
+
+    it('typed hash requires colon separator', () => {
+      // From Attic: hash strings must have colon (algorithm:hash)
+      const narinfo = parseNarinfo(cacheNixosOrgNarinfo);
+      const [algo, hash] = narinfo.narHash.split(':');
+
+      expect(algo).toBe('sha256');
+      expect(hash).toBeDefined();
+      expect(hash.length).toBeGreaterThan(0);
+    });
+  });
 });
