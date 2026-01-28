@@ -2,10 +2,25 @@
 import nacl from 'tweetnacl';
 
 /**
+ * Parse a Nix-format key (keyname:base64key) and return just the base64 part.
+ */
+function parseNixKey(key: string): string {
+  const colonIndex = key.indexOf(':');
+  if (colonIndex !== -1) {
+    // Nix format: "keyname:base64key"
+    return key.slice(colonIndex + 1);
+  }
+  // Already just base64
+  return key;
+}
+
+/**
  * Decode a base64-encoded Ed25519 private key.
  * Supports raw 32-byte seeds, 64-byte keypairs, and PKCS#8 encoded keys.
+ * Also handles Nix-format keys (keyname:base64key).
  */
-function decodePrivateKey(base64Key: string): Uint8Array {
+function decodePrivateKey(key: string): Uint8Array {
+  const base64Key = parseNixKey(key);
   const decoded = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
 
   if (decoded.length === 32) {

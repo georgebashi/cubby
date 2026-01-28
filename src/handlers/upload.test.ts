@@ -6,14 +6,18 @@ import { handleUpload, parseNarInfoHeader, type UploadNarInfo } from './upload.j
 const testPrivateKey = 'MC4CAQAwBQYDK2VwBCIEIHvA+mbf8LQjQbpRHwGdev2LMEqPCfAb6SY9askCfqRu';
 const testKeyName = 'test-cache';
 
+// Valid 32-character store path hash for tests
+const testHash = 'abc12345678901234567890123456789';
+const testDepHash = 'def12345678901234567890123456789';
+
 describe('upload handler', () => {
   describe('parseNarInfoHeader', () => {
     it('parses valid nar info JSON', () => {
       const input: UploadNarInfo = {
         cache: 'main',
-        store_path_hash: 'abc123',
-        store_path: '/nix/store/abc123-test',
-        references: ['/nix/store/def456-dep'],
+        store_path_hash: testHash,
+        store_path: `/nix/store/${testHash}-test`,
+        references: [`/nix/store/${testDepHash}-dep`],
         nar_hash: 'sha256:xyz789',
         nar_size: 12345,
         sigs: [],
@@ -21,8 +25,8 @@ describe('upload handler', () => {
 
       const result = parseNarInfoHeader(JSON.stringify(input));
 
-      expect(result.store_path_hash).toBe('abc123');
-      expect(result.store_path).toBe('/nix/store/abc123-test');
+      expect(result.store_path_hash).toBe(testHash);
+      expect(result.store_path).toBe(`/nix/store/${testHash}-test`);
       expect(result.nar_hash).toBe('sha256:xyz789');
     });
   });
@@ -37,8 +41,8 @@ describe('upload handler', () => {
 
       const narInfo: UploadNarInfo = {
         cache: 'main',
-        store_path_hash: 'abc123',
-        store_path: '/nix/store/abc123-test',
+        store_path_hash: testHash,
+        store_path: `/nix/store/${testHash}-test`,
         references: [],
         nar_hash: 'sha256:xyz789',
         nar_size: 12345,
@@ -70,8 +74,8 @@ describe('upload handler', () => {
 
       const narInfo: UploadNarInfo = {
         cache: 'main',
-        store_path_hash: 'abc123',
-        store_path: '/nix/store/abc123-test',
+        store_path_hash: testHash,
+        store_path: `/nix/store/${testHash}-test`,
         references: [],
         nar_hash: 'sha256:xyz789',
         nar_size: 12345,

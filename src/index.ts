@@ -38,8 +38,16 @@ app.get("/nix-cache-info", (c) => {
 });
 
 // Read routes
-app.get("/:hash.narinfo", authMiddleware("read"), async (c) => {
-  const hash = c.req.param("hash");
+// Use wildcard and parse the filename manually
+app.get("/:filename", authMiddleware("read"), async (c) => {
+  const filename = c.req.param("filename");
+
+  // Check if it's a .narinfo request
+  if (!filename.endsWith(".narinfo")) {
+    return c.text("Not Found", 404);
+  }
+
+  const hash = filename.slice(0, -8); // Remove ".narinfo"
   const result = await handleGetNarinfo(c.env.BUCKET, hash);
 
   if (!result.found) {
@@ -51,8 +59,15 @@ app.get("/:hash.narinfo", authMiddleware("read"), async (c) => {
   });
 });
 
-app.on("HEAD", "/:hash.narinfo", authMiddleware("read"), async (c) => {
-  const hash = c.req.param("hash");
+app.on("HEAD", "/:filename", authMiddleware("read"), async (c) => {
+  const filename = c.req.param("filename");
+
+  // Check if it's a .narinfo request
+  if (!filename.endsWith(".narinfo")) {
+    return c.text("", 404);
+  }
+
+  const hash = filename.slice(0, -8); // Remove ".narinfo"
   const exists = await handleHeadNarinfo(c.env.BUCKET, hash);
 
   if (!exists) {
@@ -81,6 +96,40 @@ app.get("/nar/:filename{.+}", authMiddleware("read"), async (c) => {
   });
 });
 
+// Standard Nix binary cache PUT routes (for nix copy --to)
+// These don't use Bearer auth - nix copy uses unsigned requests with client-side signing
+app.put("/:filename", async (c) => {
+  const filename = c.req.param("filename");
+
+  // Check if it's a .narinfo request
+  if (!filename.endsWith(".narinfo")) {
+    return c.text("Not Found", 404);
+  }
+
+  const content = await c.req.text();
+
+  await c.env.BUCKET.put(filename, content, {
+    httpMetadata: { contentType: "text/x-nix-narinfo" },
+  });
+
+  return c.text("OK", 200);
+});
+
+app.put("/nar/:filename{.+}", async (c) => {
+  const filename = c.req.param("filename");
+  const body = c.req.raw.body;
+
+  if (!body) {
+    return c.text("Missing body", 400);
+  }
+
+  await c.env.BUCKET.put(`nar/${filename}`, body, {
+    httpMetadata: { contentType: "application/x-nix-nar" },
+  });
+
+  return c.text("OK", 200);
+});
+
 // API routes
 app.get("/_api/v1/cache-config/:cache", authMiddleware("read"), (c) => {
   const url = new URL(c.req.url);
@@ -103,27 +152,56 @@ app.post("/_api/v1/get-missing-paths", authMiddleware("read"), async (c) => {
 });
 
 app.put("/_api/v1/upload-path", authMiddleware("write"), async (c) => {
-  const narInfoHeader = c.req.header("X-Attic-Nar-Info");
-  if (!narInfoHeader) {
-    return c.json({ error: "Missing X-Attic-Nar-Info header" }, 400);
+  try {
+    let narInfoJson: string;
+    let narBody: ArrayBuffer;
+
+    const narInfoHeader = c.req.header("X-Attic-Nar-Info");
+    const preambleSizeHeader = c.req.header("X-Attic-Nar-Info-Preamble-Size");
+
+    // Always read body as ArrayBuffer for R2 compatibility (needs known length)
+    const fullBody = await c.req.arrayBuffer();
+
+    if (narInfoHeader) {
+      // NarInfo in header (small payloads)
+      narInfoJson = narInfoHeader;
+      narBody = fullBody;
+    } else if (preambleSizeHeader) {
+      // NarInfo as body preamble (larger payloads)
+      const preambleSize = parseInt(preambleSizeHeader, 10);
+      if (isNaN(preambleSize) || preambleSize <= 0) {
+        return c.json({ error: "Invalid X-Attic-Nar-Info-Preamble-Size" }, 400);
+      }
+
+      const preambleBytes = new Uint8Array(fullBody.slice(0, preambleSize));
+      narInfoJson = new TextDecoder().decode(preambleBytes);
+
+      // The rest is the NAR body
+      narBody = fullBody.slice(preambleSize);
+    } else {
+      return c.json({ error: "Missing X-Attic-Nar-Info or X-Attic-Nar-Info-Preamble-Size header" }, 400);
+    }
+
+    if (narBody.byteLength === 0) {
+      return c.json({ error: "Empty request body" }, 400);
+    }
+
+    const narInfo = parseNarInfoHeader(narInfoJson);
+
+    const result = await handleUpload({
+      bucket: c.env.BUCKET,
+      narInfo,
+      narBody,
+      signingKey: c.env.SIGNING_KEY,
+      signingKeyName: c.env.SIGNING_KEY_NAME,
+    });
+
+    return c.json(result);
+  } catch (err) {
+    console.error("Upload error:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
   }
-
-  const narInfo = parseNarInfoHeader(narInfoHeader);
-  const narBody = c.req.raw.body;
-
-  if (!narBody) {
-    return c.json({ error: "Missing request body" }, 400);
-  }
-
-  const result = await handleUpload({
-    bucket: c.env.BUCKET,
-    narInfo,
-    narBody,
-    signingKey: c.env.SIGNING_KEY,
-    signingKeyName: c.env.SIGNING_KEY_NAME,
-  });
-
-  return c.json(result);
 });
 
 export default app;

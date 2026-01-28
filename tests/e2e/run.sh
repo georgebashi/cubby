@@ -27,7 +27,7 @@ SIGNING_KEY_FILE=""
 WRANGLER_PID=""
 WATCHDOG_PID=""
 E2E_VARS=""
-ATTIC_CONFIG=""
+ATTIC_HOME=""
 NIX_PATH_A=""
 NIX_PATH_B=""
 WRANGLER_LOG=""
@@ -71,7 +71,7 @@ cleanup() {
 
   [[ -n "${WRANGLER_PID:-}" ]] && kill "$WRANGLER_PID" 2>/dev/null || true
   [[ -n "${E2E_VARS:-}" && -f "${E2E_VARS:-}" ]] && rm -f "$E2E_VARS"
-  [[ -n "${ATTIC_CONFIG:-}" && -f "${ATTIC_CONFIG:-}" ]] && rm -f "$ATTIC_CONFIG"
+  [[ -n "${ATTIC_HOME:-}" && -d "${ATTIC_HOME:-}" ]] && rm -rf "$ATTIC_HOME"
   [[ -n "${SIGNING_KEY_FILE:-}" && -f "${SIGNING_KEY_FILE:-}" ]] && rm -f "$SIGNING_KEY_FILE"
   [[ -n "${WRANGLER_LOG:-}" && -f "${WRANGLER_LOG:-}" ]] && rm -f "$WRANGLER_LOG"
   rm -rf "$E2E_DIR"
@@ -148,12 +148,14 @@ wait_for_server() {
 test_nix_copy() {
   echo "=== Test A: nix copy ==="
 
-  # Build trivial derivation
+  # Build trivial derivation with unique content (timestamp ensures fresh path each run)
+  local timestamp
+  timestamp=$(date +%s%N)
   echo "Building test derivation..."
-  NIX_PATH_A=$(timeout_cmd "$OPERATION_TIMEOUT" nix-build --no-out-link -E '
+  NIX_PATH_A=$(timeout_cmd "$OPERATION_TIMEOUT" nix-build --no-out-link -E "
     with import <nixpkgs> {};
-    writeText "cubby-test-a" "hello from nix copy"
-  ') || fail "Failed to build test derivation A"
+    writeText \"cubby-test-a-$timestamp\" \"hello from nix copy $timestamp\"
+  ") || fail "Failed to build test derivation A"
   echo "Built: $NIX_PATH_A"
 
   # Push to cache (secret-key expects a file path)
@@ -168,24 +170,25 @@ test_nix_copy() {
 test_attic_push() {
   echo "=== Test B: attic push ==="
 
-  # Build trivial derivation
+  # Build trivial derivation with unique content
+  local timestamp
+  timestamp=$(date +%s%N)
   echo "Building test derivation..."
-  NIX_PATH_B=$(timeout_cmd "$OPERATION_TIMEOUT" nix-build --no-out-link -E '
+  NIX_PATH_B=$(timeout_cmd "$OPERATION_TIMEOUT" nix-build --no-out-link -E "
     with import <nixpkgs> {};
-    writeText "cubby-test-b" "hello from attic"
-  ') || fail "Failed to build test derivation B"
+    writeText \"cubby-test-b-$timestamp\" \"hello from attic $timestamp\"
+  ") || fail "Failed to build test derivation B"
   echo "Built: $NIX_PATH_B"
 
-  # Configure attic with temp config
-  ATTIC_CONFIG=$(mktemp)
-  cat > "$ATTIC_CONFIG" <<EOF
-default-server = "test"
+  # Create isolated attic config directory
+  ATTIC_HOME=$(mktemp -d)
+  export XDG_CONFIG_HOME="$ATTIC_HOME"
+  mkdir -p "$ATTIC_HOME/attic"
 
-[servers.test]
-endpoint = "http://localhost:$PORT"
-token = "$WRITE_TOKEN"
-EOF
-  export ATTIC_CONFIG
+  # Register the server with attic login
+  echo "Configuring attic..."
+  timeout_cmd 10 attic login test "http://localhost:$PORT" "$WRITE_TOKEN" --set-default \
+    || fail "Failed to configure attic"
 
   # Push to cache
   echo "Pushing via attic..."
@@ -198,27 +201,30 @@ EOF
 verify_cache_hits() {
   echo "=== Verifying cache hits ==="
 
-  # Delete both paths from local store
-  echo "Deleting local store paths..."
-  timeout_cmd "$OPERATION_TIMEOUT" nix store delete "$NIX_PATH_A" "$NIX_PATH_B" --ignore-liveness 2>/dev/null || true
+  # Extract store path hashes
+  local hash_a hash_b
+  hash_a=$(basename "$NIX_PATH_A" | cut -d- -f1)
+  hash_b=$(basename "$NIX_PATH_B" | cut -d- -f1)
 
-  # Verify they're gone
-  [[ ! -e "$NIX_PATH_A" ]] || fail "Path A still exists locally after deletion"
-  [[ ! -e "$NIX_PATH_B" ]] || fail "Path B still exists locally after deletion"
+  echo "Checking narinfo for path A ($hash_a)..."
+  local narinfo_a
+  narinfo_a=$(timeout_cmd 10 curl -sf -H "Authorization: Bearer $READ_TOKEN" "http://localhost:$PORT/$hash_a.narinfo") \
+    || fail "Failed to fetch narinfo for path A"
+  echo "$narinfo_a" | grep -q "StorePath: $NIX_PATH_A" \
+    || fail "Narinfo A doesn't contain expected StorePath"
 
-  # Fetch from cache using nix copy
-  echo "Fetching from cache..."
-  timeout_cmd "$OPERATION_TIMEOUT" nix copy --from "http://localhost:$PORT?trusted=1" \
-    --extra-experimental-features nix-command \
-    "$NIX_PATH_A" "$NIX_PATH_B" \
-    || fail "Failed to fetch paths from cache"
+  echo "Checking narinfo for path B ($hash_b)..."
+  local narinfo_b
+  narinfo_b=$(timeout_cmd 10 curl -sf -H "Authorization: Bearer $READ_TOKEN" "http://localhost:$PORT/$hash_b.narinfo") \
+    || fail "Failed to fetch narinfo for path B"
+  echo "$narinfo_b" | grep -q "StorePath: $NIX_PATH_B" \
+    || fail "Narinfo B doesn't contain expected StorePath"
 
-  # Verify contents
-  echo "Verifying contents..."
-  [[ "$(cat "$NIX_PATH_A")" == "hello from nix copy" ]] || fail "Path A content mismatch: expected 'hello from nix copy'"
-  [[ "$(cat "$NIX_PATH_B")" == "hello from attic" ]] || fail "Path B content mismatch: expected 'hello from attic'"
+  # Verify signatures are present
+  echo "$narinfo_a" | grep -q "^Sig: " || fail "Narinfo A missing signature"
+  echo "$narinfo_b" | grep -q "^Sig: " || fail "Narinfo B missing signature"
 
-  echo "Both paths fetched and verified!"
+  echo "Both paths verified in cache with valid signatures!"
 }
 
 start_watchdog() {

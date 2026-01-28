@@ -26,7 +26,7 @@ export interface UploadResult {
 export interface UploadInput {
   bucket: R2Bucket;
   narInfo: UploadNarInfo;
-  narBody: ReadableStream;
+  narBody: ReadableStream | ArrayBuffer;
   signingKey: string;
   signingKeyName: string;
 }
@@ -48,6 +48,27 @@ function extractReferenceNames(references: string[]): string[] {
     }
     return ref;
   });
+}
+
+/**
+ * Extract the store path hash from a full store path.
+ * The hash is the first 32 characters of the base name.
+ * e.g., /nix/store/rbwma3mj2zvv9g3bqw17ggzzi11nq4l6-test -> rbwma3mj2zvv9g3bqw17ggzzi11nq4l6
+ */
+function extractStorePathHash(storePath: string): string {
+  // Remove /nix/store/ prefix if present
+  const baseName = storePath.startsWith('/nix/store/')
+    ? storePath.slice('/nix/store/'.length)
+    : storePath;
+
+  // The hash is the first 32 characters
+  const hash = baseName.slice(0, 32);
+
+  if (hash.length !== 32) {
+    throw new Error(`Invalid store path hash length: ${hash.length}, expected 32`);
+  }
+
+  return hash;
 }
 
 /**
@@ -104,8 +125,11 @@ export async function handleUpload(input: UploadInput): Promise<UploadResult> {
 
   const narinfoContent = generateNarinfo(narinfoData);
 
+  // Extract the hash from store_path (more reliable than trusting store_path_hash)
+  const storePathHash = extractStorePathHash(narInfo.store_path);
+
   // Store the narinfo
-  await bucket.put(`${narInfo.store_path_hash}.narinfo`, narinfoContent, {
+  await bucket.put(`${storePathHash}.narinfo`, narinfoContent, {
     httpMetadata: {
       contentType: 'text/x-nix-narinfo',
     },
