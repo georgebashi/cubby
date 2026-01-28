@@ -1,4 +1,8 @@
 node_modules
 dist
 .wrangler
+.wrangler/e2e
 .dev.vars
+
+# Nix
+flake.lock
