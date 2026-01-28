@@ -237,8 +237,7 @@ app.get("/nar/:filename{.+}", authMiddleware("read"), async (c) => {
 });
 
 // Standard Nix binary cache PUT routes (for nix copy --to)
-// These don't use Bearer auth - nix copy uses unsigned requests with client-side signing
-app.put("/:filename", async (c) => {
+app.put("/:filename", authMiddleware("write"), async (c) => {
   const filename = c.req.param("filename");
 
   // Check if it's a .narinfo request
@@ -255,7 +254,7 @@ app.put("/:filename", async (c) => {
   return c.text("OK", 200);
 });
 
-app.put("/nar/:filename{.+}", async (c) => {
+app.put("/nar/:filename{.+}", authMiddleware("write"), async (c) => {
   const filename = c.req.param("filename");
   const body = c.req.raw.body;
 
