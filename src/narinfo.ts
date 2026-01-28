@@ -30,6 +30,10 @@ export function parseNarinfo(content: string): NarinfoData {
     data[key] = value;
   }
 
+  // Attic treats "unknown-deriver" as None/undefined
+  const deriver = data['Deriver'];
+  const resolvedDeriver = deriver === 'unknown-deriver' ? undefined : deriver;
+
   return {
     storePath: data['StorePath'] || '',
     url: data['URL'] || '',
@@ -40,7 +44,7 @@ export function parseNarinfo(content: string): NarinfoData {
     narSize: parseInt(data['NarSize'] || '0', 10),
     references: data['References'] ? data['References'].split(' ').filter(Boolean) : [],
     sig: data['Sig'] || '',
-    deriver: data['Deriver'],
+    deriver: resolvedDeriver,
     system: data['System'],
     ca: data['CA'],
   };

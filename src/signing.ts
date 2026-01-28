@@ -70,6 +70,53 @@ export function getPublicKey(privateKeyBase64: string, keyName: string): string 
 }
 
 /**
+ * Parse a Nix-format public key and return the raw bytes.
+ * Input format: "{keyName}:{base64PublicKey}"
+ */
+function decodePublicKey(publicKey: string): { name: string; key: Uint8Array } {
+  const colonIndex = publicKey.indexOf(':');
+  if (colonIndex === -1) {
+    throw new Error('Invalid public key format: missing colon');
+  }
+  const name = publicKey.slice(0, colonIndex);
+  const base64Key = publicKey.slice(colonIndex + 1);
+  const key = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+
+  if (key.length !== 32) {
+    throw new Error(`Invalid public key length: ${key.length}, expected 32`);
+  }
+
+  return { name, key };
+}
+
+/**
+ * Verify a signature against a public key.
+ * @param publicKey - Nix-format public key "{keyName}:{base64PublicKey}"
+ * @param signature - Nix-format signature "{keyName}:{base64Signature}"
+ * @param fingerprint - The message that was signed
+ * @returns true if signature is valid, false otherwise
+ */
+export function verifySignature(
+  publicKey: string,
+  signature: string,
+  fingerprint: string
+): boolean {
+  const { key: publicKeyBytes } = decodePublicKey(publicKey);
+
+  // Parse signature (keyName:base64Signature)
+  const sigColonIndex = signature.indexOf(':');
+  if (sigColonIndex === -1) {
+    throw new Error('Invalid signature format: missing colon');
+  }
+  const signatureBase64 = signature.slice(sigColonIndex + 1);
+  const signatureBytes = Uint8Array.from(atob(signatureBase64), c => c.charCodeAt(0));
+
+  const message = new TextEncoder().encode(fingerprint);
+
+  return nacl.sign.detached.verify(message, signatureBytes, publicKeyBytes);
+}
+
+/**
  * Build the fingerprint string for narinfo signing.
  * Format: "1;{storePath};{narHash};{narSize};{references}"
  */
