@@ -26,8 +26,11 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v12
+
       - name: E2E Test
-        run: npm run test:e2e
+        run: nix develop -c npm run test:e2e
 
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
